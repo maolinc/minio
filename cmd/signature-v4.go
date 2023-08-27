@@ -204,6 +204,14 @@ func doesPolicySignatureV4Match(formValues http.Header) (auth.Credentials, APIEr
 	return cred, ErrNone
 }
 
+var (
+	// 忽略签名字段
+	notSignParams = set.CreateStringSet(
+		"filename",
+		"x-minio-process",
+	)
+)
+
 // doesPresignedSignatureMatch - Verify query headers with presigned signature
 //   - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
 //
@@ -281,8 +289,9 @@ func doesPresignedSignatureMatch(hashedPayload string, r *http.Request, region s
 	)
 
 	// Add missing query parameters if any provided in the request URL
+	// 新增字段不参与签名计算
 	for k, v := range req.Form {
-		if !defaultSigParams.Contains(k) {
+		if !defaultSigParams.Contains(k) && !notSignParams.Contains(k) {
 			query[k] = v
 		}
 	}

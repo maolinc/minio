@@ -18,6 +18,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"encoding/hex"
 	"encoding/xml"
@@ -34,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/disintegration/imaging"
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/gzhttp"
 	miniogo "github.com/minio/minio-go/v7"
@@ -62,6 +64,7 @@ import (
 	"github.com/minio/pkg/bucket/policy"
 	iampolicy "github.com/minio/pkg/iam/policy"
 	xnet "github.com/minio/pkg/net"
+	"image"
 )
 
 // supportedHeadGetReqParams - supported request parameters for GET and HEAD presigned request.
@@ -315,6 +318,14 @@ func (api objectAPIHandlers) SelectObjectContentHandler(w http.ResponseWriter, r
 	})
 }
 
+// GetUrlArg 获取URL的GET参数
+func GetUrlArg(r *http.Request, name string) string {
+	var arg string
+	values := r.URL.Query()
+	arg = values.Get(name)
+	return arg
+}
+
 func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI ObjectLayer, bucket, object string, w http.ResponseWriter, r *http.Request) {
 	if crypto.S3.IsRequested(r.Header) || crypto.S3KMS.IsRequested(r.Header) { // If SSE-S3 or SSE-KMS present -> AWS fails with undefined error
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrBadRequest), r.URL)
@@ -526,6 +537,12 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		return
 	}
 
+	// 请求头中添加下载文件名参数
+	var filename string = GetUrlArg(r, "filename")
+	if filename != "" {
+		w.Header().Set("Content-disposition", "attachment; filename="+filename)
+	}
+
 	// Set Parts Count Header
 	if opts.PartNumber > 0 && len(objInfo.Parts) > 0 {
 		setPartsCountHeaders(w, objInfo)
@@ -540,8 +557,16 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		w.WriteHeader(http.StatusPartialContent)
 	}
 
+	// 处理压缩图片
+	isProcess, err := processImage(r, httpWriter, object, gr)
+	if isProcess {
+		w.Header().Set(xhttp.ContentType, "image/jpeg")
+		w.Header().Del(xhttp.ContentLength)
+	} else {
+		_, err = xioutil.Copy(httpWriter, gr)
+	}
 	// Write object content to response body
-	if _, err = xioutil.Copy(httpWriter, gr); err != nil {
+	if err != nil {
 		if !httpWriter.HasWritten() && !statusCodeWritten {
 			// write error response only if no data or headers has been written to client yet
 			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL)
@@ -574,6 +599,89 @@ func (api objectAPIHandlers) getObjectHandler(ctx context.Context, objectAPI Obj
 		UserAgent:    r.UserAgent(),
 		Host:         handlers.GetSourceIP(r),
 	})
+}
+
+// 处理图片
+func processImage(r *http.Request, httpWriter *xioutil.WriteOnCloser, object string, gr *GetObjectReader) (isProcess bool, err error) {
+	//是图片文件
+	objectLowerName := strings.ToLower(object)
+	// if filename == "" && (strings.HasSuffix(objectLowerName, "jpg") || strings.HasSuffix(objectLowerName, "png") || strings.HasSuffix(objectLowerName, "jpeg") || strings.HasSuffix(objectLowerName, "bmp")) {
+	if strings.HasSuffix(objectLowerName, "jpg") || strings.HasSuffix(objectLowerName, "png") ||
+		strings.HasSuffix(objectLowerName, "jpeg") || strings.HasSuffix(objectLowerName, "bmp") {
+		proArg := GetUrlArg(r, "x-minio-process")
+		rObj, ok := parseProcess(proArg)
+		if !ok {
+			return false, nil
+		}
+		updateImage, format, decodeErr := image.Decode(bufio.NewReader(gr.Reader))
+		if decodeErr != nil {
+			logger.Error(time.Now().Format("2006-01-02 15:04:05") + " format:" + format + " error:" + decodeErr.Error())
+			return false, nil
+		}
+		ops := make([]imaging.EncodeOption, 0)
+		// h=0,w=0  原图压缩
+		q := rObj.quality
+		if q > 100 {
+			q = 100
+		}
+		if q != 0 {
+			ops = append(ops, imaging.JPEGQuality(q))
+		}
+		if rObj.height > 0 || rObj.width > 0 {
+			updateImage = imaging.Resize(updateImage, rObj.width, rObj.height, imaging.Lanczos)
+		}
+		if encodeError := imaging.Encode(httpWriter, updateImage, imaging.JPEG, ops...); encodeError != nil {
+			return true, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+type resizeObj struct {
+	height  int
+	width   int
+	quality int
+}
+
+// 解析压缩参数 x-minio-process=image/resize,h_100,w_100,q_90
+func parseProcess(arg string) (rObj *resizeObj, ok bool) {
+	// x-minio-process=image/resize,h_100,w_100,q_90
+	arr := strings.Split(arg, ",")
+	if len(arr) == 0 || arr[0] != "image/resize" {
+		return nil, false
+	}
+	getData := func(s string) (string, int, bool) {
+		b := strings.Split(s, "_")
+		if len(b) == 2 {
+			if atoi, err := strconv.Atoi(b[1]); err == nil {
+				if atoi > 0 {
+					return b[0], atoi, true
+				}
+			}
+		}
+		return "", 0, false
+	}
+	rObj = &resizeObj{}
+	for i, item := range arr {
+		if i == 0 {
+			continue
+		}
+		label, data, b := getData(item)
+		if !b {
+			continue
+		}
+		switch label {
+		case "h":
+			rObj.height = data
+		case "w":
+			rObj.width = data
+		case "q":
+			rObj.quality = data
+		}
+	}
+	ok = true
+	return
 }
 
 // GetObjectHandler - GET Object
@@ -1780,7 +1888,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	}
 	opts.IndexCB = idxCb
 
-	if opts.PreserveETag != "" ||
+	if (!opts.MTime.IsZero() && opts.PreserveETag != "") ||
 		r.Header.Get(xhttp.IfMatch) != "" ||
 		r.Header.Get(xhttp.IfNoneMatch) != "" {
 		opts.CheckPrecondFn = func(oi ObjectInfo) bool {
