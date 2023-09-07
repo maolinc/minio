@@ -204,6 +204,8 @@ type eventArgs struct {
 	RespElements map[string]string
 	Host         string
 	UserAgent    string
+	// 增加透传参数
+	CallbackParams map[string]string
 }
 
 // ToEvent - converts to notification event.
@@ -260,6 +262,8 @@ func (args eventArgs) ToEvent(escape bool) event.Event {
 			Host:      args.Host,
 			UserAgent: args.UserAgent,
 		},
+		// 增加透传参数
+		CallbackParams: args.CallbackParams,
 	}
 
 	if args.EventName != event.ObjectRemovedDelete && args.EventName != event.ObjectRemovedDeleteMarkerCreated {

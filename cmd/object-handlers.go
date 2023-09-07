@@ -21,6 +21,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -2042,13 +2043,14 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	// Notify object created event.
 	evt := eventArgs{
-		EventName:    event.ObjectCreatedPut,
-		BucketName:   bucket,
-		Object:       objInfo,
-		ReqParams:    extractReqParams(r),
-		RespElements: extractRespElements(w),
-		UserAgent:    r.UserAgent(),
-		Host:         handlers.GetSourceIP(r),
+		EventName:      event.ObjectCreatedPut,
+		BucketName:     bucket,
+		Object:         objInfo,
+		ReqParams:      extractReqParams(r),
+		RespElements:   extractRespElements(w),
+		UserAgent:      r.UserAgent(),
+		Host:           handlers.GetSourceIP(r),
+		CallbackParams: getCallbackParams(r),
 	}
 	sendEvent(evt)
 	if objInfo.NumVersions > dataScannerExcessiveVersionsThreshold {
@@ -2058,7 +2060,13 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 
 	// Do not send checksums in events to avoid leaks.
 	hash.TransferChecksumHeader(w, r)
-	writeSuccessResponseHeadersOnly(w)
+	// 透传用户参数
+	callbackParams, err := json.Marshal(evt.CallbackParams)
+	if err != nil {
+		writeSuccessResponseHeadersOnly(w)
+	} else {
+		writeSuccessResponseJSON(w, callbackParams)
+	}
 
 	// Remove the transitioned object whose object version is being overwritten.
 	if !globalTierConfigMgr.Empty() {
@@ -2067,6 +2075,18 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		enqueueTransitionImmediate(objInfo, lcEventSrc_s3PutObject)
 		logger.LogIf(ctx, os.Sweep())
 	}
+}
+
+// 获取用户透传参数，必须以h-开头
+func getCallbackParams(r *http.Request) map[string]string {
+	cb := map[string]string{}
+	values := r.URL.Query()
+	for k, _ := range values {
+		if strings.HasPrefix(k, "h-") {
+			cb[k] = values.Get(k)
+		}
+	}
+	return cb
 }
 
 // PutObjectExtractHandler - PUT Object extract is an extended API

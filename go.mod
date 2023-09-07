@@ -17,6 +17,7 @@ require (
 	github.com/coreos/go-systemd/v22 v22.5.0
 	github.com/cosnicolaou/pbzip2 v1.0.2
 	github.com/dchest/siphash v1.2.3
+	github.com/disintegration/imaging v1.6.2
 	github.com/djherbis/atime v1.1.0
 	github.com/dustin/go-humanize v1.0.1
 	github.com/eclipse/paho.mqtt.golang v1.4.3
@@ -117,7 +118,6 @@ require (
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
-	github.com/disintegration/imaging v1.6.2 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/eapache/go-resiliency v1.4.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20230731223053-c322873962e3 // indirect

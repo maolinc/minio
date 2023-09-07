@@ -87,6 +87,8 @@ type Event struct {
 	S3                Metadata          `json:"s3"`
 	Source            Source            `json:"source"`
 	Type              madmin.TraceType  `json:"-"`
+	// 增加透传参数
+	CallbackParams map[string]string `json:"callbackParams"`
 }
 
 // Mask returns the type as mask.

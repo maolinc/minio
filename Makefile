@@ -174,3 +174,7 @@ clean: ## cleanup all generated assets
 	@rm -rvf build
 	@rm -rvf release
 	@rm -rvf .verify*
+
+buildLinux:
+	go env -w GOOS=linux GOARCH=amd64 CGO_ENABLED=0
+	go build -o minio main.go
